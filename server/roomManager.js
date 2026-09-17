@@ -11,7 +11,7 @@ const { createSessionManager } = require('./session');
  * そのルームの hostToken を知っているソケットからしか行えないようにし、
  * 入室コードを知っただけの第三者がホスト権限を奪えないようにする。
  */
-function createRoomManager(defaultQuestions) {
+function createRoomManager() {
   const roomsByCode = new Map(); // code -> room
   const codeByToken = new Map(); // hostToken -> code
 
@@ -23,13 +23,13 @@ function createRoomManager(defaultQuestions) {
     return code;
   }
 
-  function createRoom(questions = defaultQuestions) {
+  function createRoom() {
     const code = generateCode();
     const hostToken = uuidv4();
     const room = {
       code,
       hostToken,
-      session: createSessionManager(questions),
+      session: createSessionManager(),
       hostSocketId: null,
       createdAt: Date.now(),
     };

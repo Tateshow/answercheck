@@ -1,23 +1,45 @@
 const { v4: uuidv4 } = require('uuid');
 
 /**
- * 単一セッション（1回のクイズ/謎解きイベント）分の状態を保持するインメモリのマネージャ。
- * MVPでは選択式問題のみを対象とし、正誤は自動採点した上でホストが上書きできる。
+ * 単一ルーム分の状態を保持するインメモリのマネージャ。
+ *
+ * 問題文そのものはこのアプリの外（別のスライドや紙など）で提示される前提で、
+ * ホストは各ラウンドの開始時に「制限時間」と「自動判定用の正解（表記ゆれ対応で複数可）」
+ * だけを入力する。プレーヤーは自由記述で回答し、正誤と回答時間が記録される。
  */
-function createSessionManager(questions) {
+
+// 表記ゆれをできるだけ吸収するための正規化（前後空白除去・全角英数字/スペースの半角化・大文字小文字無視）。
+function normalizeAnswer(raw) {
+  if (raw == null) return '';
+  return String(raw)
+    .trim()
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/[　\s]+/g, '')
+    .toLowerCase();
+}
+
+// 複数の正解候補を改行区切りで受け取り、空行を除いた配列にする。
+function parseAcceptedAnswers(raw) {
+  return String(raw || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function createSessionManager() {
   const state = {
-    questions,
-    currentIndex: -1,
     phase: 'idle', // idle | accepting | closed | published | ended
-    deadline: null,
+    rounds: [], // { index, acceptedAnswers(raw), acceptedNormalized, durationSec, allowResubmit, resultOrder, startedAt, deadline }
+    currentRoundIndex: -1,
     players: new Map(), // playerId -> player
     socketToPlayer: new Map(), // socketId -> playerId
+    nextJoinSeq: 0,
+    // 直近のラウンドで使った設定を次回のフォーム初期値として引き継ぐ。
+    lastSettings: { allowResubmit: false, resultOrder: 'speed' },
   };
 
-  function currentQuestion() {
-    return state.currentIndex >= 0 && state.currentIndex < state.questions.length
-      ? state.questions[state.currentIndex]
-      : null;
+  function currentRound() {
+    return state.currentRoundIndex >= 0 ? state.rounds[state.currentRoundIndex] : null;
   }
 
   function hasNameTaken(name) {
@@ -34,8 +56,8 @@ function createSessionManager(questions) {
       name,
       socketId,
       connected: true,
-      score: 0,
-      answers: new Map(), // questionId -> { choiceIndex, correct, auto, judged }
+      joinSeq: state.nextJoinSeq++,
+      answers: new Map(), // roundIndex -> { text, submittedAt, responseTimeMs, correct, auto, judged }
     };
     state.players.set(id, player);
     state.socketToPlayer.set(socketId, id);
@@ -61,32 +83,57 @@ function createSessionManager(questions) {
     if (player) player.connected = false;
   }
 
-  function startQuestion(index, durationSec) {
-    if (index < 0 || index >= state.questions.length) return null;
-    state.currentIndex = index;
-    state.phase = 'accepting';
+  function startRound({ durationSec, acceptedAnswersRaw, allowResubmit, resultOrder }) {
     const seconds = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 30;
-    state.deadline = Date.now() + seconds * 1000;
-    const q = state.questions[index];
-    // 出題し直された場合に備え、この問題への既存回答はクリアする。
-    for (const p of state.players.values()) {
-      p.answers.delete(q.id);
-    }
-    return { id: q.id, text: q.text, choices: q.choices, deadline: state.deadline };
+    const accepted = parseAcceptedAnswers(acceptedAnswersRaw);
+    if (accepted.length === 0) return { ok: false, error: '自動判定用の正解を1つ以上入力してください' };
+
+    const round = {
+      index: state.rounds.length,
+      acceptedAnswersRaw: accepted,
+      acceptedNormalized: accepted.map(normalizeAnswer),
+      durationSec: seconds,
+      allowResubmit: !!allowResubmit,
+      resultOrder: resultOrder === 'joinOrder' ? 'joinOrder' : 'speed',
+      startedAt: Date.now(),
+      deadline: Date.now() + seconds * 1000,
+    };
+    state.rounds.push(round);
+    state.currentRoundIndex = round.index;
+    state.phase = 'accepting';
+    state.lastSettings = { allowResubmit: round.allowResubmit, resultOrder: round.resultOrder };
+
+    return {
+      ok: true,
+      round: { index: round.index, durationSec: round.durationSec, deadline: round.deadline, allowResubmit: round.allowResubmit },
+    };
   }
 
-  function submitAnswer(socketId, choiceIndex) {
+  function submitAnswer(socketId, text) {
     if (state.phase !== 'accepting') return { ok: false, error: '現在は受付時間外です' };
     const player = getPlayerBySocket(socketId);
     if (!player) return { ok: false, error: '参加者情報が見つかりません' };
-    const q = currentQuestion();
-    if (!q) return { ok: false, error: '出題中の問題がありません' };
-    if (typeof choiceIndex !== 'number' || choiceIndex < 0 || choiceIndex >= q.choices.length) {
-      return { ok: false, error: '選択肢が不正です' };
+    const round = currentRound();
+    if (!round) return { ok: false, error: '出題中の問題がありません' };
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return { ok: false, error: '回答を入力してください' };
+
+    const existing = player.answers.get(round.index);
+    if (existing && !round.allowResubmit) {
+      return { ok: false, error: '回答は一度きりの設定です（既に回答済み）' };
     }
-    const correct = choiceIndex === q.correctIndex;
-    player.answers.set(q.id, { choiceIndex, correct, auto: true, judged: true });
-    return { ok: true };
+
+    const responseTimeMs = Date.now() - round.startedAt;
+    const correct = round.acceptedNormalized.includes(normalizeAnswer(trimmed));
+    player.answers.set(round.index, {
+      text: trimmed,
+      submittedAt: Date.now(),
+      responseTimeMs,
+      correct,
+      auto: true,
+      judged: true,
+    });
+    return { ok: true, correct };
   }
 
   function closeAnswers() {
@@ -95,94 +142,129 @@ function createSessionManager(questions) {
 
   function overrideJudgment(playerId, correct) {
     const player = state.players.get(playerId);
-    const q = currentQuestion();
-    if (!player || !q) return;
-    const existing = player.answers.get(q.id) || { choiceIndex: null, auto: false };
-    player.answers.set(q.id, { ...existing, correct: !!correct, auto: false, judged: true });
+    const round = currentRound();
+    if (!player || !round) return;
+    const existing = player.answers.get(round.index) || { text: '', responseTimeMs: null, auto: false };
+    player.answers.set(round.index, { ...existing, correct: !!correct, auto: false, judged: true });
+  }
+
+  function orderPlayers(list, order) {
+    if (order === 'joinOrder') {
+      return list.sort((a, b) => a._joinSeq - b._joinSeq);
+    }
+    // speed: 回答者を回答時間の速い順、未回答者は最後（入室順）
+    return list.sort((a, b) => {
+      const at = a._responseTimeMs;
+      const bt = b._responseTimeMs;
+      if (at == null && bt == null) return a._joinSeq - b._joinSeq;
+      if (at == null) return 1;
+      if (bt == null) return -1;
+      return at - bt;
+    });
   }
 
   function publishResults() {
-    const q = currentQuestion();
-    if (!q) return { questionId: null, correctIndex: null, players: [] };
-    const results = [];
-    for (const p of state.players.values()) {
-      const ans = p.answers.get(q.id);
-      const correct = !!(ans && ans.correct);
-      if (correct) p.score += q.points || 1;
-      results.push({
+    const round = currentRound();
+    if (!round) return { roundIndex: null, acceptedAnswers: [], players: [] };
+    const rows = Array.from(state.players.values()).map((p) => {
+      const ans = p.answers.get(round.index);
+      return {
         playerId: p.id,
         name: p.name,
-        choiceIndex: ans ? ans.choiceIndex : null,
-        correct,
-        score: p.score,
-      });
-    }
+        text: ans ? ans.text : null,
+        correct: !!(ans && ans.correct),
+        responseTimeMs: ans ? ans.responseTimeMs : null,
+        _responseTimeMs: ans ? ans.responseTimeMs : null,
+        _joinSeq: p.joinSeq,
+      };
+    });
+    orderPlayers(rows, round.resultOrder);
     state.phase = 'published';
-    return { questionId: q.id, questionText: q.text, correctIndex: q.correctIndex, players: results };
+    return {
+      roundIndex: round.index,
+      acceptedAnswers: round.acceptedAnswersRaw,
+      resultOrder: round.resultOrder,
+      players: rows.map(({ _responseTimeMs, _joinSeq, ...rest }) => rest),
+    };
   }
 
   function endSession() {
     state.phase = 'ended';
-    return getLeaderboard();
+    return getFinalRanking();
   }
 
-  function getLeaderboard() {
-    return Array.from(state.players.values())
-      .map((p) => ({ playerId: p.id, name: p.name, score: p.score }))
-      .sort((a, b) => b.score - a.score);
+  // タイブレークの公平性のため、未回答の問題は「その問題の制限時間フル」をペナルティとして加算する。
+  function getFinalRanking() {
+    const list = Array.from(state.players.values()).map((p) => {
+      let correctCount = 0;
+      let totalResponseTimeMs = 0;
+      const breakdown = state.rounds.map((round) => {
+        const ans = p.answers.get(round.index);
+        const answered = !!ans;
+        const correct = !!(ans && ans.correct);
+        const responseTimeMs = answered ? ans.responseTimeMs : round.durationSec * 1000;
+        if (correct) correctCount += 1;
+        totalResponseTimeMs += responseTimeMs;
+        return { roundIndex: round.index, answered, correct, responseTimeMs, text: answered ? ans.text : null };
+      });
+      return { playerId: p.id, name: p.name, correctCount, totalResponseTimeMs, breakdown, _joinSeq: p.joinSeq };
+    });
+    list.sort((a, b) => b.correctCount - a.correctCount || a.totalResponseTimeMs - b.totalResponseTimeMs || a._joinSeq - b._joinSeq);
+    return list.map(({ _joinSeq, ...rest }) => rest);
   }
 
   function getPublicState() {
-    const q = currentQuestion();
+    const round = currentRound();
     return {
       phase: state.phase,
-      currentIndex: state.currentIndex,
-      totalQuestions: state.questions.length,
-      questionText: q ? q.text : null,
-      deadline: state.deadline,
+      currentRoundIndex: state.currentRoundIndex,
+      totalRounds: state.rounds.length,
+      round: round ? { index: round.index, durationSec: round.durationSec, deadline: round.deadline, allowResubmit: round.allowResubmit, resultOrder: round.resultOrder } : null,
+      lastSettings: state.lastSettings,
     };
   }
 
-  function getQuestionSummaries() {
-    return state.questions.map((q, i) => ({ index: i, id: q.id, text: q.text }));
-  }
-
   function getPlayerSummaries() {
-    return Array.from(state.players.values()).map((p) => ({
-      id: p.id,
-      name: p.name,
-      connected: p.connected,
-      score: p.score,
-    }));
+    return Array.from(state.players.values()).map((p) => {
+      let correctCount = 0;
+      for (const ans of p.answers.values()) if (ans.correct) correctCount += 1;
+      return { id: p.id, name: p.name, connected: p.connected, correctCount };
+    });
   }
 
   function getAnswerSummaries() {
-    const q = currentQuestion();
-    if (!q) return [];
-    return Array.from(state.players.values()).map((p) => {
-      const ans = p.answers.get(q.id);
+    const round = currentRound();
+    if (!round) return [];
+    const rows = Array.from(state.players.values()).map((p) => {
+      const ans = p.answers.get(round.index);
       return {
         playerId: p.id,
         name: p.name,
-        choiceIndex: ans ? ans.choiceIndex : null,
+        text: ans ? ans.text : null,
         submitted: !!ans,
         correct: ans ? ans.correct : null,
         auto: ans ? ans.auto : null,
+        responseTimeMs: ans ? ans.responseTimeMs : null,
+        _responseTimeMs: ans ? ans.responseTimeMs : null,
+        _joinSeq: p.joinSeq,
       };
     });
+    orderPlayers(rows, round.resultOrder);
+    return rows.map(({ _responseTimeMs, _joinSeq, ...rest }) => rest);
   }
 
   function getStateForPlayer(playerId) {
     const player = state.players.get(playerId);
-    const q = currentQuestion();
+    const round = currentRound();
+    const existingAnswer = round && player ? player.answers.get(round.index) : null;
     return {
       phase: state.phase,
-      score: player ? player.score : 0,
-      question:
-        q && state.phase === 'accepting'
-          ? { id: q.id, text: q.text, choices: q.choices, deadline: state.deadline }
+      round:
+        round && state.phase === 'accepting'
+          ? { index: round.index, durationSec: round.durationSec, deadline: round.deadline, allowResubmit: round.allowResubmit }
           : null,
-      hasAnswered: q && player ? player.answers.has(q.id) : false,
+      hasAnswered: !!existingAnswer,
+      myAnswerText: existingAnswer ? existingAnswer.text : null,
     };
   }
 
@@ -192,15 +274,14 @@ function createSessionManager(questions) {
     getPlayerBySocket,
     reconnectPlayer,
     markDisconnected,
-    startQuestion,
+    startRound,
     submitAnswer,
     closeAnswers,
     overrideJudgment,
     publishResults,
     endSession,
-    getLeaderboard,
+    getFinalRanking,
     getPublicState,
-    getQuestionSummaries,
     getPlayerSummaries,
     getAnswerSummaries,
     getStateForPlayer,

@@ -6,7 +6,6 @@ const { Server } = require('socket.io');
 const QRCode = require('qrcode');
 
 const { createRoomManager } = require('./roomManager');
-const questions = require('./questions.sample.json');
 
 const PORT = process.env.PORT || 3000;
 
@@ -25,7 +24,7 @@ app.use(
 const server = http.createServer(app);
 const io = new Server(server);
 
-const roomManager = createRoomManager(questions);
+const roomManager = createRoomManager();
 
 // socket.id -> { code, role: 'host' | 'player', playerId? }
 const socketMeta = new Map();
@@ -79,10 +78,8 @@ async function hostSnapshot(room) {
     joinUrl: joinUrl(room.code),
     qrDataUrl,
     state: room.session.getPublicState(),
-    questions: room.session.getQuestionSummaries(),
     players: room.session.getPlayerSummaries(),
     answers: room.session.getAnswerSummaries(),
-    leaderboard: room.session.getLeaderboard(),
   };
 }
 
@@ -152,14 +149,15 @@ io.on('connection', (socket) => {
     io.to(hostRoom(code)).emit('host:players', room.session.getPlayerSummaries());
   });
 
-  socket.on('player:submitAnswer', ({ code, choiceIndex } = {}) => {
+  socket.on('player:submitAnswer', ({ code, text } = {}) => {
     const room = roomManager.getRoomByCode(code);
     if (!room) return;
-    const result = room.session.submitAnswer(socket.id, choiceIndex);
+    const result = room.session.submitAnswer(socket.id, text);
     if (!result.ok) {
       socket.emit('player:error', { error: result.error });
       return;
     }
+    socket.emit('player:answerAccepted', { text: String(text || '').trim() });
     io.to(hostRoom(code)).emit('host:answers', room.session.getAnswerSummaries());
   });
 
@@ -171,12 +169,16 @@ io.on('connection', (socket) => {
     return roomManager.getRoomByCode(code);
   }
 
-  socket.on('host:startQuestion', ({ code, index, durationSec } = {}) => {
+  socket.on('host:startRound', ({ code, durationSec, acceptedAnswersRaw, allowResubmit, resultOrder } = {}, ack) => {
     const room = requireHostRoom(code);
     if (!room) return;
-    const q = room.session.startQuestion(index, durationSec);
-    if (!q) return;
-    io.to(playerRoom(code)).emit('player:question', q);
+    const result = room.session.startRound({ durationSec, acceptedAnswersRaw, allowResubmit, resultOrder });
+    if (!result.ok) {
+      if (ack) ack(result);
+      return;
+    }
+    if (ack) ack(result);
+    io.to(playerRoom(code)).emit('player:round', result.round);
     io.to(hostRoom(code)).emit('host:state', room.session.getPublicState());
     io.to(hostRoom(code)).emit('host:answers', room.session.getAnswerSummaries());
   });
@@ -203,15 +205,16 @@ io.on('connection', (socket) => {
     const payload = room.session.publishResults();
     io.to(playerRoom(code)).emit('player:results', payload);
     io.to(hostRoom(code)).emit('host:state', room.session.getPublicState());
-    io.to(hostRoom(code)).emit('host:leaderboard', room.session.getLeaderboard());
+    io.to(hostRoom(code)).emit('host:results', payload);
   });
 
   socket.on('host:endSession', ({ code } = {}) => {
     const room = requireHostRoom(code);
     if (!room) return;
-    const leaderboard = room.session.endSession();
-    io.to(playerRoom(code)).emit('player:ended', { leaderboard });
+    const ranking = room.session.endSession();
+    io.to(playerRoom(code)).emit('player:ended', { ranking });
     io.to(hostRoom(code)).emit('host:state', room.session.getPublicState());
+    io.to(hostRoom(code)).emit('host:ranking', ranking);
   });
 
   socket.on('disconnect', () => {
