@@ -107,6 +107,22 @@ socket.on('player:error', (data) => {
   document.getElementById('answer-error').textContent = data.error || '';
 });
 
+// パネル式の回答公開1枚分のDOMを組み立てる（案3: 回答ゾーン左上に小さく回答時間、
+// 中央に太字で回答、下部の濃色帯に細字でプレイヤー名のみ）。host.js と共通の見た目。
+function buildPanelItem(p, timeLabel, isMe) {
+  const box = document.createElement('div');
+  box.className = 'panel-item' + (p.correct ? ' correct' : '');
+  const answered = p.text != null;
+  box.innerHTML = `
+    <div class="panel-answer-zone">
+      ${answered ? `<div class="panel-time">${timeLabel}</div>` : ''}
+      <div class="panel-answer${answered ? '' : ' unanswered'}">${answered ? escapeHtml(p.text) : '未回答'}</div>
+    </div>
+    <div class="panel-name">${escapeHtml(p.name)}${isMe ? '（あなた）' : ''}</div>
+  `;
+  return box;
+}
+
 socket.on('player:results', (payload) => {
   clearInterval(timerHandle);
   showScreen('result');
@@ -115,71 +131,103 @@ socket.on('player:results', (payload) => {
   const detail = document.getElementById('result-detail');
   if (mine) {
     headline.textContent = mine.correct ? '正解！' : '不正解';
-    headline.style.color = mine.correct ? '#1f9d55' : '#d64545';
+    headline.className = mine.correct ? 'correct-text' : 'incorrect-text';
   } else {
     headline.textContent = '結果発表';
+    headline.className = '';
   }
   detail.textContent = `正解: ${payload.acceptedAnswers.join(' / ')}`;
   document.getElementById('result-order-label').textContent = payload.resultOrder === 'joinOrder' ? 'ルーム入室順' : '回答が早かった順';
 
+  const isPanel = payload.revealStyle === 'panel';
   const list = document.getElementById('result-list');
+  const panel = document.getElementById('result-panel');
+  list.style.display = isPanel ? 'none' : 'block';
+  panel.style.display = isPanel ? 'grid' : 'none';
   list.innerHTML = '';
+  panel.innerHTML = '';
+
   payload.players.forEach((p) => {
-    const li = document.createElement('li');
     const timeLabel = p.responseTimeMs != null ? `${(p.responseTimeMs / 1000).toFixed(1)}秒` : '未回答';
     const isMe = p.playerId === myPlayerId();
-    li.textContent = `${p.name}${isMe ? '（あなた）' : ''} — ${p.correct ? '正解' : '不正解'}（${timeLabel}）`;
-    if (isMe) li.style.fontWeight = 'bold';
-    list.appendChild(li);
+    if (isPanel) {
+      panel.appendChild(buildPanelItem(p, timeLabel, isMe));
+    } else {
+      const li = document.createElement('li');
+      li.textContent = `${p.name}${isMe ? '（あなた）' : ''} — ${p.correct ? '正解' : '不正解'}（${timeLabel}）`;
+      if (isMe) li.style.fontWeight = 'bold';
+      list.appendChild(li);
+    }
   });
+});
+
+socket.on('player:standings', (standings) => {
+  const section = document.getElementById('standings-section');
+  section.style.display = 'block';
+  document.getElementById('standings-round-label').textContent = standings.totalRounds;
+  buildRankingRows(document.getElementById('standings-table'), standings.ranking, { withDetail: false });
 });
 
 socket.on('player:ended', (data) => {
   clearInterval(timerHandle);
   showScreen('ended');
-  const list = document.getElementById('final-ranking');
-  list.innerHTML = '';
-  data.ranking.forEach((p) => {
-    const li = document.createElement('li');
+  buildRankingRows(document.getElementById('final-ranking'), data.ranking, { withDetail: true });
+});
+
+// 「現在のランキング」「最終結果」で共通のテーブル描画。withDetail=true なら各問の内訳を開閉できる。
+function buildRankingRows(tbody, ranking, { withDetail }) {
+  tbody.innerHTML = '';
+  ranking.forEach((p, idx) => {
     const isMe = p.playerId === myPlayerId();
-    const totalSec = (p.totalResponseTimeMs / 1000).toFixed(1);
-    li.textContent = `${p.name}${isMe ? '（あなた）' : ''} — 正解 ${p.correctCount}問 / 合計回答時間 ${totalSec}秒`;
-    if (isMe) li.style.fontWeight = 'bold';
+    const tr = document.createElement('tr');
+    if (isMe) tr.style.fontWeight = 'bold';
+    tr.innerHTML = `
+      <td>${idx + 1}位</td>
+      <td>${escapeHtml(p.name)}${isMe ? '（あなた）' : ''}</td>
+      <td>${p.correctCount}</td>
+      <td>${p.incorrectCount}</td>
+      <td>${(p.totalResponseTimeMs / 1000).toFixed(1)}秒</td>
+      ${withDetail ? '<td></td>' : ''}
+    `;
+    tbody.appendChild(tr);
+
+    if (!withDetail) return;
 
     const toggle = document.createElement('button');
     toggle.textContent = '詳細を見る';
     toggle.className = 'ghost';
-    toggle.style.marginLeft = '10px';
     toggle.style.padding = '2px 10px';
     toggle.style.fontSize = '0.85rem';
+    tr.lastElementChild.appendChild(toggle);
 
-    const detailTable = document.createElement('table');
-    detailTable.style.display = 'none';
-    detailTable.style.marginTop = '8px';
-    detailTable.innerHTML = `
-      <thead><tr><th>問題</th><th>回答</th><th>判定</th><th>回答時間</th></tr></thead>
-      <tbody>
-        ${p.breakdown
-          .map(
-            (b) => `<tr>
-              <td>第${b.roundIndex + 1}問</td>
-              <td>${b.answered ? escapeHtml(b.text) : '未回答'}</td>
-              <td>${b.correct ? '<span class="badge correct">正解</span>' : '<span class="badge incorrect">不正解</span>'}</td>
-              <td>${(b.responseTimeMs / 1000).toFixed(1)}秒</td>
-            </tr>`
-          )
-          .join('')}
-      </tbody>
+    const detailRow = document.createElement('tr');
+    detailRow.style.display = 'none';
+    const detailCell = document.createElement('td');
+    detailCell.colSpan = 6;
+    detailCell.innerHTML = `
+      <table>
+        <thead><tr><th>問題</th><th>回答</th><th>判定</th><th>回答時間</th></tr></thead>
+        <tbody>
+          ${p.breakdown
+            .map(
+              (b) => `<tr>
+                <td>第${b.roundIndex + 1}問</td>
+                <td>${b.answered ? escapeHtml(b.text) : '未回答'}</td>
+                <td>${b.correct ? '<span class="badge correct">正解</span>' : '<span class="badge incorrect">不正解</span>'}</td>
+                <td>${(b.responseTimeMs / 1000).toFixed(1)}秒</td>
+              </tr>`
+            )
+            .join('')}
+        </tbody>
+      </table>
     `;
+    detailRow.appendChild(detailCell);
     toggle.onclick = () => {
-      detailTable.style.display = detailTable.style.display === 'none' ? 'table' : 'none';
+      detailRow.style.display = detailRow.style.display === 'none' ? 'table-row' : 'none';
     };
-
-    li.appendChild(toggle);
-    li.appendChild(detailTable);
-    list.appendChild(li);
+    tbody.appendChild(detailRow);
   });
-});
+}
 
 function renderRound(round, alreadyAnswered, myAnswerText) {
   showScreen('question');

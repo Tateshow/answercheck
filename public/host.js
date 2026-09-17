@@ -28,6 +28,10 @@ const el = {
   publishedOrderLabel: document.getElementById('published-order-label'),
   publishedCorrectAnswers: document.getElementById('published-correct-answers'),
   publishedList: document.getElementById('published-list'),
+  publishedPanel: document.getElementById('published-panel'),
+  standingsCard: document.getElementById('standings-card'),
+  standingsRoundLabel: document.getElementById('standings-round-label'),
+  standingsTable: document.getElementById('standings-table'),
   rankingList: document.getElementById('ranking-list'),
   btnEnd: document.getElementById('btn-end'),
 };
@@ -115,6 +119,7 @@ socket.on('host:state', applyState);
 socket.on('host:players', renderPlayers);
 socket.on('host:answers', renderAnswers);
 socket.on('host:results', renderPublished);
+socket.on('host:standings', renderStandings);
 socket.on('host:ranking', renderRanking);
 
 function applyState(state) {
@@ -127,6 +132,8 @@ function applyState(state) {
     if (resubmitRadio) resubmitRadio.checked = true;
     const orderRadio = document.querySelector(`input[name="result-order"][value="${state.lastSettings.resultOrder}"]`);
     if (orderRadio) orderRadio.checked = true;
+    const revealRadio = document.querySelector(`input[name="reveal-style"][value="${state.lastSettings.revealStyle || 'list'}"]`);
+    if (revealRadio) revealRadio.checked = true;
   }
 
   if (!state.round) {
@@ -143,6 +150,7 @@ function applyState(state) {
     el.btnClose.disabled = false;
     el.btnPublish.disabled = true;
     el.publishedCard.style.display = 'none';
+    el.standingsCard.style.display = 'none';
   } else if (state.phase === 'closed') {
     el.currentStatus.textContent = `${label} — 受付締切・採点中`;
     el.btnClose.disabled = true;
@@ -159,10 +167,11 @@ el.btnStartRound.onclick = () => {
   const acceptedAnswersRaw = el.inputAnswers.value;
   const allowResubmit = document.querySelector('input[name="allow-resubmit"]:checked').value === 'true';
   const resultOrder = document.querySelector('input[name="result-order"]:checked').value;
+  const revealStyle = document.querySelector('input[name="reveal-style"]:checked').value;
 
   el.roundError.textContent = '';
   el.btnStartRound.disabled = true;
-  emitWithTimeout('host:startRound', { code, durationSec, acceptedAnswersRaw, allowResubmit, resultOrder }, (res) => {
+  emitWithTimeout('host:startRound', { code, durationSec, acceptedAnswersRaw, allowResubmit, resultOrder, revealStyle }, (res) => {
     el.btnStartRound.disabled = false;
     if (!res) {
       el.roundError.textContent = 'サーバーから応答がありません。';
@@ -176,14 +185,22 @@ el.btnStartRound.onclick = () => {
   });
 };
 
+function formatSeconds(ms) {
+  return ms == null ? '-' : `${(ms / 1000).toFixed(1)}秒`;
+}
+
 function renderPlayers(players) {
   el.playerCount.textContent = players.length;
   el.playerList.innerHTML = '';
   players.forEach((p) => {
-    const li = document.createElement('li');
-    li.style.padding = '4px 0';
-    li.textContent = `${p.name}${p.connected ? '' : '（切断中）'} — 正解 ${p.correctCount}問`;
-    el.playerList.appendChild(li);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(p.name)}${p.connected ? '' : ' <span class="muted">（切断中）</span>'}</td>
+      <td>${p.correctCount}</td>
+      <td>${p.incorrectCount}</td>
+      <td>${formatSeconds(p.totalResponseTimeMs)}</td>
+    `;
+    el.playerList.appendChild(tr);
   });
 }
 
@@ -224,58 +241,106 @@ function renderAnswers(answers) {
   });
 }
 
+// パネル式の回答公開1枚分のDOMを組み立てる（案3: 回答ゾーン左上に小さく回答時間、
+// 中央に太字で回答、下部の濃色帯に細字でプレイヤー名のみ）。host.js / player.js で共通の見た目。
+function buildPanelItem(p, timeLabel) {
+  const box = document.createElement('div');
+  box.className = 'panel-item' + (p.correct ? ' correct' : '');
+  const answered = p.text != null;
+  box.innerHTML = `
+    <div class="panel-answer-zone">
+      ${answered ? `<div class="panel-time">${timeLabel}</div>` : ''}
+      <div class="panel-answer${answered ? '' : ' unanswered'}">${answered ? escapeHtml(p.text) : '未回答'}</div>
+    </div>
+    <div class="panel-name">${escapeHtml(p.name)}</div>
+  `;
+  return box;
+}
+
 function renderPublished(payload) {
   el.publishedCard.style.display = 'block';
   el.publishedOrderLabel.textContent = payload.resultOrder === 'joinOrder' ? 'ルーム入室順' : '回答が早かった順';
   el.publishedCorrectAnswers.textContent = payload.acceptedAnswers.join(' / ');
+
+  const isPanel = payload.revealStyle === 'panel';
+  el.publishedList.style.display = isPanel ? 'none' : 'block';
+  el.publishedPanel.style.display = isPanel ? 'grid' : 'none';
+
   el.publishedList.innerHTML = '';
+  el.publishedPanel.innerHTML = '';
+
   payload.players.forEach((p) => {
-    const li = document.createElement('li');
     const timeLabel = p.responseTimeMs != null ? `${(p.responseTimeMs / 1000).toFixed(1)}秒` : '未回答';
-    li.textContent = `${p.name} — ${p.correct ? '正解' : '不正解'}（${timeLabel}）`;
-    el.publishedList.appendChild(li);
+    if (isPanel) {
+      el.publishedPanel.appendChild(buildPanelItem(p, timeLabel));
+    } else {
+      const li = document.createElement('li');
+      li.textContent = `${p.name} — ${p.correct ? '正解' : '不正解'}（${timeLabel}）`;
+      el.publishedList.appendChild(li);
+    }
   });
 }
 
+function renderStandings(standings) {
+  el.standingsCard.style.display = 'block';
+  el.standingsRoundLabel.textContent = standings.totalRounds;
+  buildRankingRows(el.standingsTable, standings.ranking);
+}
+
 function renderRanking(ranking) {
-  el.rankingList.innerHTML = '';
-  ranking.forEach((p) => {
-    const li = document.createElement('li');
-    const totalSec = (p.totalResponseTimeMs / 1000).toFixed(1);
-    li.textContent = `${p.name} — 正解 ${p.correctCount}問 / 合計回答時間 ${totalSec}秒`;
+  buildRankingRows(el.rankingList, ranking);
+}
+
+// 「現在のランキング」「最終結果」で共通のテーブル描画（順位・プレイヤー名・正解数・誤答数・総回答時間・詳細）。
+function buildRankingRows(tbody, ranking) {
+  tbody.innerHTML = '';
+  ranking.forEach((p, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${idx + 1}位</td>
+      <td>${escapeHtml(p.name)}</td>
+      <td>${p.correctCount}</td>
+      <td>${p.incorrectCount}</td>
+      <td>${formatSeconds(p.totalResponseTimeMs)}</td>
+      <td></td>
+    `;
 
     const toggle = document.createElement('button');
     toggle.textContent = '詳細を見る';
     toggle.className = 'ghost';
-    toggle.style.marginLeft = '10px';
     toggle.style.padding = '2px 10px';
     toggle.style.fontSize = '0.85rem';
+    tr.lastElementChild.appendChild(toggle);
 
-    const detail = document.createElement('table');
-    detail.style.display = 'none';
-    detail.style.marginTop = '8px';
-    detail.innerHTML = `
-      <thead><tr><th>問題</th><th>回答</th><th>判定</th><th>回答時間</th></tr></thead>
-      <tbody>
-        ${p.breakdown
-          .map(
-            (b) => `<tr>
-              <td>第${b.roundIndex + 1}問</td>
-              <td>${b.answered ? escapeHtml(b.text) : '未回答'}</td>
-              <td>${b.correct ? '<span class="badge correct">正解</span>' : '<span class="badge incorrect">不正解</span>'}</td>
-              <td>${(b.responseTimeMs / 1000).toFixed(1)}秒${b.answered ? '' : '（未回答のため制限時間分）'}</td>
-            </tr>`
-          )
-          .join('')}
-      </tbody>
+    const detailRow = document.createElement('tr');
+    detailRow.style.display = 'none';
+    const detailCell = document.createElement('td');
+    detailCell.colSpan = 6;
+    detailCell.innerHTML = `
+      <table>
+        <thead><tr><th>問題</th><th>回答</th><th>判定</th><th>回答時間</th></tr></thead>
+        <tbody>
+          ${p.breakdown
+            .map(
+              (b) => `<tr>
+                <td>第${b.roundIndex + 1}問</td>
+                <td>${b.answered ? escapeHtml(b.text) : '未回答'}</td>
+                <td>${b.correct ? '<span class="badge correct">正解</span>' : '<span class="badge incorrect">不正解</span>'}</td>
+                <td>${(b.responseTimeMs / 1000).toFixed(1)}秒${b.answered ? '' : '（未回答のため制限時間分）'}</td>
+              </tr>`
+            )
+            .join('')}
+        </tbody>
+      </table>
     `;
+    detailRow.appendChild(detailCell);
+
     toggle.onclick = () => {
-      detail.style.display = detail.style.display === 'none' ? 'table' : 'none';
+      detailRow.style.display = detailRow.style.display === 'none' ? 'table-row' : 'none';
     };
 
-    li.appendChild(toggle);
-    li.appendChild(detail);
-    el.rankingList.appendChild(li);
+    tbody.appendChild(tr);
+    tbody.appendChild(detailRow);
   });
 }
 

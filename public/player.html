@@ -4,9 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>回答一斉確認アプリ</title>
+<script src="theme.js"></script>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+<button id="theme-toggle" class="theme-toggle-btn"></button>
 <div class="wrap narrow">
 
   <div id="screen-join" class="card">
@@ -17,7 +19,7 @@
     <input type="text" id="name-input" placeholder="ニックネーム" maxlength="20" />
     <div style="height:12px"></div>
     <button id="btn-join" style="width:100%">参加する</button>
-    <p id="join-error" style="color:#d64545"></p>
+    <p id="join-error" style="color:var(--bad)"></p>
   </div>
 
   <div id="screen-waiting" class="card" style="display:none">
@@ -31,7 +33,7 @@
     <input type="text" id="answer-input" placeholder="回答を入力" style="width:100%" />
     <div style="height:12px"></div>
     <button id="btn-submit" style="width:100%">回答する</button>
-    <p id="answer-error" style="color:#d64545"></p>
+    <p id="answer-error" style="color:var(--bad)"></p>
     <p id="submitted-note" class="muted" style="display:none">回答を受け付けました。結果をお待ちください。</p>
   </div>
 
@@ -40,11 +42,27 @@
     <p id="result-detail" class="lead"></p>
     <h2 style="margin-bottom:6px">今回の結果（<span id="result-order-label"></span>）</h2>
     <ol id="result-list" style="padding-left:20px"></ol>
+    <div id="result-panel" class="panel-grid" style="display:none"></div>
+
+    <div id="standings-section" style="display:none">
+      <h2 style="margin-bottom:6px">現在のランキング（<span id="standings-round-label"></span>問終了時点）</h2>
+      <table>
+        <thead>
+          <tr><th>順位</th><th>プレイヤー名</th><th>正解数</th><th>誤答数</th><th>総回答時間</th></tr>
+        </thead>
+        <tbody id="standings-table"></tbody>
+      </table>
+    </div>
   </div>
 
   <div id="screen-ended" class="card" style="display:none">
     <h1 style="margin-top:0">最終結果</h1>
-    <ol id="final-ranking" class="leaderboard"></ol>
+    <table>
+      <thead>
+        <tr><th>順位</th><th>プレイヤー名</th><th>正解数</th><th>誤答数</th><th>総回答時間</th><th></th></tr>
+      </thead>
+      <tbody id="final-ranking"></tbody>
+    </table>
   </div>
 
 </div>

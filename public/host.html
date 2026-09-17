@@ -4,9 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ホスト画面 | 回答一斉確認アプリ</title>
+<script src="theme.js"></script>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+<button id="theme-toggle" class="theme-toggle-btn"></button>
 <div class="wrap">
   <h1>回答一斉確認アプリ — ホスト画面</h1>
   <p class="lead">問題そのものは別の画面・紙などで提示し、このアプリでは回答の受付・自動判定・一斉公開だけをおこないます。</p>
@@ -15,7 +17,7 @@
     <h2 style="margin-top:0">ルームを開始</h2>
     <button id="btn-create">新しいルームを作成する</button>
     <p id="start-status" class="muted" style="margin-top:12px"></p>
-    <p id="start-error" style="color:#d64545"></p>
+    <p id="start-error" style="color:var(--bad)"></p>
   </div>
 
   <div id="screen-main" style="display:none">
@@ -35,7 +37,7 @@
       <input type="number" id="input-duration" value="30" min="1" />
       <div style="height:10px"></div>
       <label class="muted" for="input-answers">自動判定用の正解（表記ゆれ違いは改行で複数入力可）</label>
-      <textarea id="input-answers" rows="3" placeholder="例）とうきょう&#10;東京&#10;Tokyo" style="width:100%;font-size:1rem;padding:10px;border-radius:8px;border:1px solid #e2e4e9"></textarea>
+      <textarea id="input-answers" rows="3" placeholder="例）とうきょう&#10;東京&#10;Tokyo"></textarea>
       <details style="margin-top:10px">
         <summary class="muted" style="cursor:pointer">詳細設定</summary>
         <div style="margin-top:8px">
@@ -45,15 +47,23 @@
           <div class="muted" style="margin:10px 0 4px">結果の表示順</div>
           <label><input type="radio" name="result-order" value="speed" checked /> 回答が早かった順</label><br />
           <label><input type="radio" name="result-order" value="joinOrder" /> ルーム入室順</label>
+          <div class="muted" style="margin:10px 0 4px">回答公開の方法</div>
+          <label><input type="radio" name="reveal-style" value="list" checked /> リスト式（表示順に一覧表示）</label><br />
+          <label><input type="radio" name="reveal-style" value="panel" /> パネル式（枠の色で正誤が一目でわかる）</label>
         </div>
       </details>
       <div style="height:12px"></div>
       <button id="btn-start-round">出題開始</button>
-      <p id="round-error" style="color:#d64545"></p>
+      <p id="round-error" style="color:var(--bad)"></p>
     </div>
     <div class="card">
       <h2 style="margin-top:0">参加者 (<span id="player-count">0</span>人)</h2>
-      <ul id="player-list" style="list-style:none;padding:0;margin:0"></ul>
+      <table>
+        <thead>
+          <tr><th>プレイヤー名</th><th>正解数</th><th>誤答数</th><th>総回答時間</th></tr>
+        </thead>
+        <tbody id="player-list"></tbody>
+      </table>
     </div>
   </div>
 
@@ -80,11 +90,27 @@
     <h2 style="margin-top:0">公開済みの結果（<span id="published-order-label"></span>）</h2>
     <p class="muted">正解: <span id="published-correct-answers"></span></p>
     <ol id="published-list" style="padding-left:20px"></ol>
+    <div id="published-panel" class="panel-grid" style="display:none"></div>
+  </div>
+
+  <div id="standings-card" class="card" style="display:none">
+    <h2 style="margin-top:0">現在のランキング（<span id="standings-round-label"></span>問終了時点）</h2>
+    <table>
+      <thead>
+        <tr><th>順位</th><th>プレイヤー名</th><th>正解数</th><th>誤答数</th><th>総回答時間</th><th></th></tr>
+      </thead>
+      <tbody id="standings-table"></tbody>
+    </table>
   </div>
 
   <div class="card">
     <h2 style="margin-top:0">最終結果</h2>
-    <ol id="ranking-list" class="leaderboard"></ol>
+    <table>
+      <thead>
+        <tr><th>順位</th><th>プレイヤー名</th><th>正解数</th><th>誤答数</th><th>総回答時間</th><th></th></tr>
+      </thead>
+      <tbody id="ranking-list"></tbody>
+    </table>
     <button id="btn-end" class="ghost">セッションを終了して最終結果を表示</button>
   </div>
 
