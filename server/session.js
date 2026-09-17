@@ -35,7 +35,7 @@ function createSessionManager() {
     socketToPlayer: new Map(), // socketId -> playerId
     nextJoinSeq: 0,
     // 直近のラウンドで使った設定を次回のフォーム初期値として引き継ぐ。
-    lastSettings: { allowResubmit: false, resultOrder: 'speed' },
+    lastSettings: { allowResubmit: false, resultOrder: 'speed', revealStyle: 'list' },
   };
 
   function currentRound() {
@@ -83,7 +83,7 @@ function createSessionManager() {
     if (player) player.connected = false;
   }
 
-  function startRound({ durationSec, acceptedAnswersRaw, allowResubmit, resultOrder }) {
+  function startRound({ durationSec, acceptedAnswersRaw, allowResubmit, resultOrder, revealStyle }) {
     const seconds = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 30;
     const accepted = parseAcceptedAnswers(acceptedAnswersRaw);
     if (accepted.length === 0) return { ok: false, error: '自動判定用の正解を1つ以上入力してください' };
@@ -95,13 +95,14 @@ function createSessionManager() {
       durationSec: seconds,
       allowResubmit: !!allowResubmit,
       resultOrder: resultOrder === 'joinOrder' ? 'joinOrder' : 'speed',
+      revealStyle: revealStyle === 'panel' ? 'panel' : 'list',
       startedAt: Date.now(),
       deadline: Date.now() + seconds * 1000,
     };
     state.rounds.push(round);
     state.currentRoundIndex = round.index;
     state.phase = 'accepting';
-    state.lastSettings = { allowResubmit: round.allowResubmit, resultOrder: round.resultOrder };
+    state.lastSettings = { allowResubmit: round.allowResubmit, resultOrder: round.resultOrder, revealStyle: round.revealStyle };
 
     return {
       ok: true,
@@ -184,17 +185,22 @@ function createSessionManager() {
       roundIndex: round.index,
       acceptedAnswers: round.acceptedAnswersRaw,
       resultOrder: round.resultOrder,
+      revealStyle: round.revealStyle,
       players: rows.map(({ _responseTimeMs, _joinSeq, ...rest }) => rest),
     };
   }
 
   function endSession() {
     state.phase = 'ended';
-    return getFinalRanking();
+    return getStandings();
   }
 
+  // 「現段階でのランキング」。集計対象はその時点で存在するラウンド（＝出題済みの問題）のみなので、
+  // セッション途中（各問題の結果公開直後）でも、最終結果でも同じロジックで呼び出せる。
   // タイブレークの公平性のため、未回答の問題は「その問題の制限時間フル」をペナルティとして加算する。
-  function getFinalRanking() {
+  // 正解数・誤答数は「出題済みの問題数 − 正解数」で、未回答も誤答として数える。
+  function computeRanking() {
+    const totalRounds = state.rounds.length;
     const list = Array.from(state.players.values()).map((p) => {
       let correctCount = 0;
       let totalResponseTimeMs = 0;
@@ -207,10 +213,16 @@ function createSessionManager() {
         totalResponseTimeMs += responseTimeMs;
         return { roundIndex: round.index, answered, correct, responseTimeMs, text: answered ? ans.text : null };
       });
-      return { playerId: p.id, name: p.name, correctCount, totalResponseTimeMs, breakdown, _joinSeq: p.joinSeq };
+      const incorrectCount = totalRounds - correctCount;
+      return { playerId: p.id, name: p.name, correctCount, incorrectCount, totalResponseTimeMs, breakdown, _joinSeq: p.joinSeq };
     });
     list.sort((a, b) => b.correctCount - a.correctCount || a.totalResponseTimeMs - b.totalResponseTimeMs || a._joinSeq - b._joinSeq);
     return list.map(({ _joinSeq, ...rest }) => rest);
+  }
+
+  // セッション終了を待たずに呼べる「現段階でのランキング」の公開API。
+  function getStandings() {
+    return { totalRounds: state.rounds.length, ranking: computeRanking() };
   }
 
   function getPublicState() {
@@ -219,16 +231,39 @@ function createSessionManager() {
       phase: state.phase,
       currentRoundIndex: state.currentRoundIndex,
       totalRounds: state.rounds.length,
-      round: round ? { index: round.index, durationSec: round.durationSec, deadline: round.deadline, allowResubmit: round.allowResubmit, resultOrder: round.resultOrder } : null,
+      round: round
+        ? {
+            index: round.index,
+            durationSec: round.durationSec,
+            deadline: round.deadline,
+            allowResubmit: round.allowResubmit,
+            resultOrder: round.resultOrder,
+            revealStyle: round.revealStyle,
+          }
+        : null,
       lastSettings: state.lastSettings,
     };
   }
 
+  // 参加者一覧テーブル用。正解数・誤答数・総回答時間はランキングと同じ定義（未回答は誤答扱い・制限時間分を回答時間に加算）で揃える。
   function getPlayerSummaries() {
+    const totalRounds = state.rounds.length;
     return Array.from(state.players.values()).map((p) => {
       let correctCount = 0;
-      for (const ans of p.answers.values()) if (ans.correct) correctCount += 1;
-      return { id: p.id, name: p.name, connected: p.connected, correctCount };
+      let totalResponseTimeMs = 0;
+      for (const round of state.rounds) {
+        const ans = p.answers.get(round.index);
+        if (ans && ans.correct) correctCount += 1;
+        totalResponseTimeMs += ans ? ans.responseTimeMs : round.durationSec * 1000;
+      }
+      return {
+        id: p.id,
+        name: p.name,
+        connected: p.connected,
+        correctCount,
+        incorrectCount: totalRounds - correctCount,
+        totalResponseTimeMs,
+      };
     });
   }
 
@@ -280,7 +315,7 @@ function createSessionManager() {
     overrideJudgment,
     publishResults,
     endSession,
-    getFinalRanking,
+    getStandings,
     getPublicState,
     getPlayerSummaries,
     getAnswerSummaries,
