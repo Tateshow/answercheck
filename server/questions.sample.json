@@ -1,0 +1,28 @@
+[
+  {
+    "id": "q1",
+    "text": "日本の首都はどこ？",
+    "choices": ["大阪", "東京", "京都", "名古屋"],
+    "correctIndex": 1,
+    "points": 1
+  },
+  {
+    "id": "q2",
+    "text": "1 + 1 × 2 の答えは？",
+    "choices": ["3", "4", "2", "6"],
+    "correctIndex": 0,
+    "points": 1
+  },
+  {
+    "id": "q3",
+    "text": "USRPとは何の略？",
+    "choices": [
+      "Universal Software Radio Peripheral",
+      "Universal Signal Router Protocol",
+      "United Software Radio Platform",
+      "Universal Serial Radio Port"
+    ],
+    "correctIndex": 0,
+    "points": 2
+  }
+]
