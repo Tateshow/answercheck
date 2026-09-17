@@ -23,25 +23,28 @@
   <div id="screen-waiting" class="card" style="display:none">
     <h1 style="margin-top:0">待機中</h1>
     <p class="lead" id="waiting-message">ホストが問題を出題するまでお待ちください。</p>
-    <p class="muted">現在の得点: <span id="waiting-score">0</span>点</p>
   </div>
 
   <div id="screen-question" class="card" style="display:none">
     <p class="muted" id="question-timer"></p>
-    <h1 id="question-text" style="margin-top:0"></h1>
-    <div id="choices"></div>
+    <h1 style="margin-top:0">回答を入力してください</h1>
+    <input type="text" id="answer-input" placeholder="回答を入力" style="width:100%" />
+    <div style="height:12px"></div>
+    <button id="btn-submit" style="width:100%">回答する</button>
+    <p id="answer-error" style="color:#d64545"></p>
     <p id="submitted-note" class="muted" style="display:none">回答を受け付けました。結果をお待ちください。</p>
   </div>
 
   <div id="screen-result" class="card" style="display:none">
     <h1 id="result-headline" style="margin-top:0"></h1>
     <p id="result-detail" class="lead"></p>
-    <p>現在の得点: <strong id="result-score">0</strong>点</p>
+    <h2 style="margin-bottom:6px">今回の結果（<span id="result-order-label"></span>）</h2>
+    <ol id="result-list" style="padding-left:20px"></ol>
   </div>
 
   <div id="screen-ended" class="card" style="display:none">
     <h1 style="margin-top:0">最終結果</h1>
-    <ol id="final-leaderboard" class="leaderboard"></ol>
+    <ol id="final-ranking" class="leaderboard"></ol>
   </div>
 
 </div>
