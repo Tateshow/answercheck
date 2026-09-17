@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ホスト画面 | 回答一斉確認アプリ</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="wrap">
+  <h1>回答一斉確認アプリ — ホスト画面</h1>
+  <p class="lead">参加者に共有するルームコード・QRコード、出題、採点、一斉公開をここで操作します。</p>
+
+  <div id="screen-start" class="card">
+    <h2 style="margin-top:0">ルームを開始</h2>
+    <button id="btn-create">新しいルームを作成する</button>
+    <p id="start-status" class="muted" style="margin-top:12px"></p>
+    <p id="start-error" style="color:#d64545"></p>
+  </div>
+
+  <div id="screen-main" style="display:none">
+
+  <div class="card">
+    <h2 style="margin-top:0">ルームコード</h2>
+    <div class="big-status" id="room-code">-----</div>
+    <p class="muted">プレーヤーは下のURL（またはQRコード）を開き、このコードとニックネームを入力して参加します。</p>
+    <p id="join-url" class="muted">読み込み中…</p>
+    <img id="qr" class="qr" alt="参加用QRコード" />
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h2 style="margin-top:0">問題一覧</h2>
+      <div id="question-list"></div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">参加者 (<span id="player-count">0</span>人)</h2>
+      <ul id="player-list" style="list-style:none;padding:0;margin:0"></ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">出題中の問題</h2>
+    <div id="current-status" class="big-status muted">まだ出題していません</div>
+    <div id="current-controls" style="display:none">
+      <button id="btn-close">受付を締め切る</button>
+      <button id="btn-publish" class="secondary" disabled>結果を一斉公開する</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">回答一覧・採点</h2>
+    <table>
+      <thead>
+        <tr><th>プレーヤー</th><th>回答</th><th>判定</th><th></th></tr>
+      </thead>
+      <tbody id="answer-table"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">得点ランキング</h2>
+    <ol id="leaderboard" class="leaderboard"></ol>
+    <button id="btn-end" class="ghost">セッションを終了して最終結果を表示</button>
+  </div>
+
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="host.js"></script>
+</body>
+</html>
