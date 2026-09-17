@@ -54,7 +54,18 @@ function createRoomManager() {
     roomsByCode.delete(code);
   }
 
-  return { createRoom, getRoomByCode, getRoomByHostToken, closeRoom };
+  // ホスト権限の移譲用: 既存のhostTokenを失効させ、新しいトークンを発行してそのルームに割り当てる。
+  function rotateHostToken(code) {
+    const room = roomsByCode.get(code);
+    if (!room) return null;
+    codeByToken.delete(room.hostToken);
+    const newToken = uuidv4();
+    room.hostToken = newToken;
+    codeByToken.set(newToken, code);
+    return newToken;
+  }
+
+  return { createRoom, getRoomByCode, getRoomByHostToken, closeRoom, rotateHostToken };
 }
 
 module.exports = { createRoomManager };

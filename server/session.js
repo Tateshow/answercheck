@@ -56,6 +56,7 @@ function createSessionManager() {
       name,
       socketId,
       connected: true,
+      left: false, // 自分の意思で「ルームを退出する」を押した場合にtrue（通信切断とは区別する）
       joinSeq: state.nextJoinSeq++,
       answers: new Map(), // roundIndex -> { text, submittedAt, responseTimeMs, correct, auto, judged }
     };
@@ -69,11 +70,26 @@ function createSessionManager() {
     return id ? state.players.get(id) : null;
   }
 
+  function getPlayerById(playerId) {
+    return state.players.get(playerId) || null;
+  }
+
+  // ホスト権限の移譲で、新しくホストになったプレイヤーを参加者一覧から除外するために使う。
+  function removePlayer(playerId) {
+    const player = state.players.get(playerId);
+    if (!player) return;
+    if (state.socketToPlayer.get(player.socketId) === playerId) {
+      state.socketToPlayer.delete(player.socketId);
+    }
+    state.players.delete(playerId);
+  }
+
   function reconnectPlayer(playerId, socketId) {
     const player = state.players.get(playerId);
     if (!player) return null;
     player.socketId = socketId;
     player.connected = true;
+    player.left = false;
     state.socketToPlayer.set(socketId, playerId);
     return player;
   }
@@ -81,6 +97,18 @@ function createSessionManager() {
   function markDisconnected(playerId) {
     const player = state.players.get(playerId);
     if (player) player.connected = false;
+  }
+
+  // プレーヤー自身が「ルームを退出する」を押した場合。データは削除せず残しておき、
+  // 同じルームコードで再入室（player:rejoin）すれば履歴・スコアがそのまま復元される。
+  function leaveRoom(playerId) {
+    const player = state.players.get(playerId);
+    if (!player) return;
+    player.connected = false;
+    player.left = true;
+    if (state.socketToPlayer.get(player.socketId) === playerId) {
+      state.socketToPlayer.delete(player.socketId);
+    }
   }
 
   function startRound({ durationSec, acceptedAnswersRaw, allowResubmit, resultOrder, revealStyle }) {
@@ -260,6 +288,7 @@ function createSessionManager() {
         id: p.id,
         name: p.name,
         connected: p.connected,
+        left: p.left,
         correctCount,
         incorrectCount: totalRounds - correctCount,
         totalResponseTimeMs,
@@ -307,8 +336,11 @@ function createSessionManager() {
     hasNameTaken,
     addPlayer,
     getPlayerBySocket,
+    getPlayerById,
+    removePlayer,
     reconnectPlayer,
     markDisconnected,
+    leaveRoom,
     startRound,
     submitAnswer,
     closeAnswers,
