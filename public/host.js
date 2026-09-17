@@ -12,6 +12,7 @@ const el = {
   roomCode: document.getElementById('room-code'),
   joinUrl: document.getElementById('join-url'),
   qr: document.getElementById('qr'),
+  btnDissolve: document.getElementById('btn-dissolve'),
   roundNumber: document.getElementById('round-number'),
   inputDuration: document.getElementById('input-duration'),
   inputAnswers: document.getElementById('input-answers'),
@@ -193,14 +194,59 @@ function renderPlayers(players) {
   el.playerCount.textContent = players.length;
   el.playerList.innerHTML = '';
   players.forEach((p) => {
+    let statusLabel = '';
+    if (p.left) statusLabel = ' <span class="muted">（退出）</span>';
+    else if (!p.connected) statusLabel = ' <span class="muted">（切断中）</span>';
+
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${escapeHtml(p.name)}${p.connected ? '' : ' <span class="muted">（切断中）</span>'}</td>
+      <td>${escapeHtml(p.name)}${statusLabel}</td>
       <td>${p.correctCount}</td>
       <td>${p.incorrectCount}</td>
       <td>${formatSeconds(p.totalResponseTimeMs)}</td>
+      <td></td>
     `;
+    if (p.connected) {
+      const transferBtn = document.createElement('button');
+      transferBtn.textContent = 'ホストにする';
+      transferBtn.className = 'ghost';
+      transferBtn.style.padding = '2px 10px';
+      transferBtn.style.fontSize = '0.85rem';
+      transferBtn.onclick = () => requestTransferHost(p);
+      tr.lastElementChild.appendChild(transferBtn);
+    }
     el.playerList.appendChild(tr);
+  });
+}
+
+function requestTransferHost(player) {
+  if (!confirm(`${player.name} さんにホスト権限を譲りますか？\nあなた自身は新しいニックネームでプレーヤーとして参加し直します。`)) {
+    return;
+  }
+  const nickname = prompt('プレーヤーとして参加する際のニックネームを入力してください', '');
+  if (nickname === null) return;
+  const trimmed = nickname.trim().slice(0, 20);
+  if (!trimmed) {
+    alert('ニックネームを入力してください');
+    return;
+  }
+  emitWithTimeout('host:transferHost', { code, targetPlayerId: player.id, newHostNickname: trimmed }, (res) => {
+    if (!res) {
+      alert('サーバーから応答がありません。');
+      return;
+    }
+    if (!res.ok) {
+      alert(res.error || 'ホスト権限の移譲に失敗しました');
+      return;
+    }
+    try {
+      localStorage.removeItem('hostToken');
+      localStorage.setItem('roomCode', res.code);
+      localStorage.setItem('playerId', res.playerId);
+    } catch (e) {
+      /* localStorageが使えない場合でも遷移自体は行う */
+    }
+    window.location.href = 'player.html';
   });
 }
 
@@ -350,6 +396,21 @@ el.btnEnd.onclick = () => {
   if (confirm('セッションを終了し、最終結果をプレーヤーに表示します。よろしいですか？')) {
     socket.emit('host:endSession', { code });
   }
+};
+
+el.btnDissolve.onclick = () => {
+  if (!confirm('ルームを解散します。参加者全員がルームコードで参加・復帰できなくなります。よろしいですか？')) {
+    return;
+  }
+  el.btnDissolve.disabled = true;
+  emitWithTimeout('host:dissolveRoom', { code }, () => {
+    try {
+      localStorage.removeItem('hostToken');
+    } catch (e) {
+      /* ignore */
+    }
+    window.location.reload();
+  });
 };
 
 function escapeHtml(str) {

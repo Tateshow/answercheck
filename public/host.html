@@ -28,6 +28,9 @@
     <p class="muted">プレーヤーは下のURL（またはQRコード）を開き、このコードとニックネームを入力して参加します。</p>
     <p id="join-url" class="muted">読み込み中…</p>
     <img id="qr" class="qr" alt="参加用QRコード" />
+    <div style="margin-top:16px">
+      <button id="btn-dissolve" class="ghost">ルームを解散する</button>
+    </div>
   </div>
 
   <div class="row">
@@ -60,10 +63,11 @@
       <h2 style="margin-top:0">参加者 (<span id="player-count">0</span>人)</h2>
       <table>
         <thead>
-          <tr><th>プレイヤー名</th><th>正解数</th><th>誤答数</th><th>総回答時間</th></tr>
+          <tr><th>プレイヤー名</th><th>正解数</th><th>誤答数</th><th>総回答時間</th><th></th></tr>
         </thead>
         <tbody id="player-list"></tbody>
       </table>
+      <p class="muted" style="margin-top:8px;font-size:0.82rem">「ホストにする」を押すと、その参加者にホスト権限を譲り、自分はプレーヤーとして参加し直します。</p>
     </div>
   </div>
 

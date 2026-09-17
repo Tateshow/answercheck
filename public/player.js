@@ -8,9 +8,13 @@ const screens = {
   ended: document.getElementById('screen-ended'),
 };
 
+const btnLeaveRoom = document.getElementById('btn-leave-room');
+
 function showScreen(name) {
   Object.values(screens).forEach((s) => (s.style.display = 'none'));
   screens[name].style.display = 'block';
+  // ルームに参加済みの画面（待機中・出題中・結果・最終結果）でのみ「退出する」ボタンを表示する。
+  btnLeaveRoom.style.display = name === 'join' ? 'none' : 'block';
 }
 
 let timerHandle = null;
@@ -57,14 +61,44 @@ function doJoin() {
     document.getElementById('join-error').textContent = 'ルームコードを入力してください';
     return;
   }
+
+  // 以前このルームに参加していて「退出する」で戻ってきた場合は、同じプレーヤーとして
+  // 復帰させる（回答履歴・スコアはそのまま）。ニックネームの再入力は不要。
+  const storedCode = localStorage.getItem('roomCode');
+  const storedPlayerId = localStorage.getItem('playerId');
+  if (storedCode === code && storedPlayerId) {
+    socket.emit('player:rejoin', { code, playerId: storedPlayerId }, (res) => {
+      if (res && res.ok) {
+        myCode = code;
+        document.getElementById('join-error').textContent = '';
+      } else {
+        // 復帰できなかった場合は通常の新規参加にフォールバックする。
+        doFreshJoin(code, name);
+      }
+    });
+    return;
+  }
+
+  doFreshJoin(code, name);
+}
+
+function doFreshJoin(code, name) {
+  if (!name || !name.trim()) {
+    document.getElementById('join-error').textContent = 'ニックネームを入力してください';
+    return;
+  }
   socket.emit('player:join', { code, name }, (res) => {
     if (!res.ok) {
       document.getElementById('join-error').textContent = res.error;
       return;
     }
     myCode = code;
-    localStorage.setItem('roomCode', code);
-    localStorage.setItem('playerId', res.playerId);
+    try {
+      localStorage.setItem('roomCode', code);
+      localStorage.setItem('playerId', res.playerId);
+    } catch (e) {
+      /* ignore */
+    }
     document.getElementById('join-error').textContent = '';
   });
 }
@@ -106,6 +140,50 @@ socket.on('player:answerAccepted', (data) => {
 socket.on('player:error', (data) => {
   document.getElementById('answer-error').textContent = data.error || '';
 });
+
+// ホストが「ルームを解散する」を押した場合。ルームコード自体が無効になるため、
+// 保存していた参加情報も破棄して参加登録画面に戻す。
+socket.on('player:roomDissolved', () => {
+  clearInterval(timerHandle);
+  try {
+    localStorage.removeItem('roomCode');
+    localStorage.removeItem('playerId');
+  } catch (e) {
+    /* ignore */
+  }
+  myCode = null;
+  showScreen('join');
+  document.getElementById('join-error').textContent = 'ホストによってルームが解散されました。';
+});
+
+// ホストから「ホスト権限を移す」で自分が新しいホストに指名された場合。
+// ホスト用トークンを保存してホスト画面へ切り替える（プレーヤー側の参加情報は不要になるので削除）。
+socket.on('player:promotedToHost', ({ hostToken }) => {
+  try {
+    localStorage.setItem('hostToken', hostToken);
+    localStorage.removeItem('roomCode');
+    localStorage.removeItem('playerId');
+  } catch (e) {
+    /* ignore */
+  }
+  window.location.href = 'host.html';
+});
+
+btnLeaveRoom.onclick = () => {
+  if (!myCode) return;
+  if (!confirm('ルームを退出しますか？（同じルームコードを入力すれば、これまでの回答履歴を引き継いで再入室できます）')) {
+    return;
+  }
+  const leavingCode = myCode;
+  socket.emit('player:leaveRoom', { code: leavingCode }, () => {
+    clearInterval(timerHandle);
+    myCode = null;
+    showScreen('join');
+    document.getElementById('code-input').value = leavingCode;
+    document.getElementById('name-input').value = '';
+    document.getElementById('join-error').textContent = '';
+  });
+};
 
 // パネル式の回答公開1枚分のDOMを組み立てる（案3: 回答ゾーン左上に小さく回答時間、
 // 中央に太字で回答、下部の濃色帯に細字でプレイヤー名のみ）。host.js と共通の見た目。
